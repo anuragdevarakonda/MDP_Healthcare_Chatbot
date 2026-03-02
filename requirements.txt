@@ -3,3 +3,5 @@ numpy
 pandas
 plotly
 graphviz
+matplotlib
+fpdf2
