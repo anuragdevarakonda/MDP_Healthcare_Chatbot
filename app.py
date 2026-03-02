@@ -2,10 +2,9 @@ import streamlit as st
 import numpy as np
 import graphviz
 from fpdf import FPDF
-import pandas as pd
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="Personalized Health MDP", layout="wide", page_icon="🩺")
+st.set_page_config(page_title="Age-Aware Health MDP", layout="wide", page_icon="⚖️")
 
 # --- CORE MDP ENGINE ---
 def policy_iteration(states, actions, P, R, gamma=0.9):
@@ -35,51 +34,25 @@ actions = ['A0', 'A1', 'A2']
 action_labels = {'A0': 'No Treatment', 'A1': 'Medication', 'A2': 'Surgery'}
 colors = {'S0': '#c7e9c0', 'S1': '#fee391', 'S2': '#fc9272'}
 
-# --- SIDEBAR NAV ---
-st.sidebar.title("🩺 Navigation")
-page = st.sidebar.radio("Go to", ["1. Strategy Analysis", "2. Live Chatbot Simulation"])
-st.sidebar.divider()
-gamma = st.sidebar.slider("Discount Factor", 0.0, 1.0, 0.9, help="Long-term vs Immediate focus.")
+# --- NAVIGATION ---
+st.sidebar.title("🩺 Strategic Controls")
+page = st.sidebar.radio("Navigation", ["1. Model Logic", "2. Personalized Live Simulation"])
 
-# --- PAGE 1: STRATEGY ANALYSIS ---
-if page == "1. Strategy Analysis":
-    st.title("📊 Global Strategy & All Transitions")
-    st.markdown("This page shows the 'Rulebook'—every possible outcome for every action.")
-    
-    # Base Matrices (Static for reference)
-    P_base = {
-        'S0': {'A0': {'S0': 0.8, 'S1': 0.2}, 'A1': {'S0': 0.9, 'S1': 0.1}, 'A2': {'S0': 0.95, 'S2': 0.05}},
-        'S1': {'A0': {'S1': 0.6, 'S2': 0.4}, 'A1': {'S0': 0.6, 'S1': 0.3, 'S2': 0.1}, 'A2': {'S0': 0.8, 'S2': 0.2}},
-        'S2': {'A0': {'S2': 1.0}, 'A1': {'S1': 0.4, 'S2': 0.6}, 'A2': {'S0': 0.7, 'S1': 0.2, 'S2': 0.1}}
-    }
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        dot_all = graphviz.Digraph()
-        dot_all.attr(rankdir='LR', size='12')
-        for s in states:
-            dot_all.node(s, state_labels[s], style='filled', fillcolor=colors[s])
-            for a in actions:
-                for sn, prob in P_base[s][a].items():
-                    dot_all.edge(s, sn, label=f"{a}({prob})", color="#95a5a6", fontsize="10")
-        st.graphviz_chart(dot_all)
-    
-    with col2:
-        st.info("**How to read this:**\n- **Nodes:** Current patient state.\n- **Arrows:** Potential transitions.\n- **Labels:** Probability of that outcome for a specific action (A0, A1, A2).")
-
-# --- PAGE 2: LIVE SIMULATION (DYNAMIC) ---
-else:
-    st.title("💬 Personalized Decision Engine")
+# --- LIVE SIMULATION PAGE ---
+if page == "2. Personalized Live Simulation":
+    st.title("⚖️ Age-Adjusted Decision Engine")
     
     # --- DYNAMIC INPUTS ---
-    st.subheader("👤 Step 1: Define Patient Context")
-    c1, c2, c3 = st.columns(3)
+    st.subheader("👤 Step 1: Comprehensive Patient Profile")
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        is_smoker = st.toggle("Active Smoker", help="Increases risk of health degradation.")
+        age = st.number_input("Patient Age", min_value=1, max_value=100, value=75)
     with c2:
-        pre_existing = st.toggle("Pre-existing Condition", help="Increases penalty for Critical state.")
+        is_smoker = st.toggle("Active Smoker", value=True)
     with c3:
-        adherence = st.select_slider("Medication Adherence", options=["Low", "Medium", "High"], value="High")
+        pre_existing = st.toggle("Pre-existing Condition", value=True)
+    with c4:
+        adherence = st.select_slider("Adherence", options=["Low", "Med", "High"], value="High")
 
     # --- DYNAMIC MATRIX MODIFICATION ---
     # Start with base logic
@@ -94,63 +67,58 @@ else:
         'S2': {'A0': -50, 'A1': -35, 'A2': -40}
     }
 
-    # Apply Modifiers
+    # AGE LOGIC: As age > 65, surgery success (P_S2_A2_S0) drops and self-loop risk increases
+    if age > 65:
+        age_factor = (age - 65) / 100
+        # Surgery risk: P(Critical -> Healthy) decreases
+        P_dyn['S2']['A2']['S0'] = max(0.2, P_dyn['S2']['A2']['S0'] - age_factor)
+        # Risk of staying Critical increases
+        P_dyn['S2']['A2']['S2'] = min(0.8, P_dyn['S2']['A2']['S2'] + age_factor)
+        st.warning(f"🧓 **Age Modifier:** Surgery recovery chance reduced to {P_dyn['S2']['A2']['S0']*100:.0f}%.")
+
     if is_smoker:
-        # Increase risk of degradation from Healthy to Sick
-        P_dyn['S0']['A0']['S1'] += 0.1
-        P_dyn['S0']['A0']['S0'] -= 0.1
-        st.warning("⚠️ **Smoker Logic Active:** Risk of falling from Healthy to Sick increased by 10%.")
+        # Increase transition from Sick to Critical
+        P_dyn['S1']['A0']['S2'] = min(0.9, P_dyn['S1']['A0']['S2'] + 0.2)
+        st.error("🚬 **Smoker Modifier:** Risk of Sick → Critical increased.")
 
     if pre_existing:
-        # Increase the penalty for Critical state across all actions
-        for a in actions:
-            R_dyn['S2'][a] -= 50
-        st.error("⚠️ **Pre-existing Condition Active:** Critical state penalty doubled (-100).")
+        # Heavily penalize the 'Critical' state
+        for a in actions: R_dyn['S2'][a] -= 100
+        st.error("❤️ **Pre-existing Modifier:** Critical state penalty tripled.")
 
-    if adherence == "Low":
-        # Medication (A1) becomes much less effective
-        P_dyn['S1']['A1']['S0'] = 0.3 # Reduced from 0.6
-        P_dyn['S1']['A1']['S1'] = 0.7
-        st.info("ℹ️ **Low Adherence Active:** Medication effectiveness reduced from 60% to 30%.")
-
-    # Recalculate Policy
-    dyn_policy, dyn_values = policy_iteration(states, actions, P_dyn, R_dyn, gamma)
+    # Recalculate
+    dyn_policy, dyn_values = policy_iteration(states, actions, P_dyn, R_dyn, 0.9)
 
     st.divider()
-    st.subheader("🤖 Step 2: Chatbot Recommendation")
+    st.subheader("🤖 Step 2: Strategic Recommendation")
     
-    current_state = st.selectbox("What is the patient's current status?", ["Healthy", "Sick", "Critical"])
+    current_state = st.selectbox("Current Condition", ["Critical", "Sick", "Healthy"])
     s_key = [k for k, v in state_labels.items() if v == current_state][0]
     
-    if st.button("Consult Chatbot"):
+    if st.button("Generate Decision"):
         best_a = dyn_policy[s_key]
         
-        sc1, sc2 = st.columns([1, 1.5])
-        with sc1:
-            st.chat_message("assistant").write(f"**Recommendation:** I advise **{action_labels[best_a]}**.")
-            st.write(f"**Personalized Value Score:** {dyn_values[s_key]:.2f}")
-            st.write("---")
-            st.write("**Decision Logic:**")
-            if pre_existing and best_a == 'A2' and s_key == 'S1':
-                st.write("Because of your pre-existing condition, I am recommending Surgery early to avoid the high risk of a Critical state.")
-            elif is_smoker:
-                st.write("Due to smoking status, I am prioritizing actions that aggressively return you to 'Healthy' status.")
+        col_txt, col_graph = st.columns([1, 1.5])
+        with col_txt:
+            st.chat_message("assistant").write(f"**Chatbot Recommends: {action_labels[best_a]}**")
+            st.write(f"**Patient Value Index:** {dyn_values[s_key]:.2f}")
+            
+            # THE LOGIC EXPLANATION
+            if age > 75 and is_smoker and current_state == "Critical":
+                if best_a == 'A1':
+                    st.write("🔎 **Logic:** Due to advanced age and smoking history, Surgery is deemed too high-risk. I recommend Medication to stabilize the state rather than invasive procedures.")
+                else:
+                    st.write("🔎 **Logic:** Despite age risks, Surgery remains the only viable path to avoid the extreme penalties of a Critical state.")
             else:
-                st.write("Standard maintenance logic applied.")
+                st.write("🔎 **Logic:** Standard risk-weighted optimization applied.")
 
-        with sc2:
-            # Visualize the EFFECT of the context on the choice
-            dot_sim = graphviz.Digraph()
-            dot_sim.attr(rankdir='LR')
+        with col_graph:
+            dot = graphviz.Digraph()
+            dot.attr(rankdir='LR')
             for s in states:
                 is_curr = (s == s_key)
-                dot_sim.node(s, state_labels[s], style='filled', 
-                             fillcolor=colors[s] if is_curr else "#f0f0f0", 
-                             penwidth="4" if is_curr else "1")
-            
-            # Show the probabilities of the CHOSEN action for this specific patient
+                dot.node(s, state_labels[s], style='filled', fillcolor=colors[s] if is_curr else "#f0f0f0")
             for sn, prob in P_dyn[s_key][best_a].items():
                 if prob > 0:
-                    dot_sim.edge(s_key, sn, label=f"{prob*100}% Outcome", color="#3498db", penwidth="3")
-            
-            st.graphviz_chart(dot_sim)
+                    dot.edge(s_key, sn, label=f"{prob*100:.0f}%", color="#3498db", penwidth="3")
+            st.graphviz_chart(dot)
