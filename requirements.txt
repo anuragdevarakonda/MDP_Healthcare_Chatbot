@@ -1,5 +1,5 @@
 streamlit
 numpy
-graphviz
-fpdf
 pandas
+plotly
+graphviz
