@@ -36,7 +36,6 @@ colors = {'S0': '#c7e9c0', 'S1': '#fee391', 'S2': '#fc9272'}
 
 # --- SIDEBAR & INPUTS ---
 st.sidebar.title("🩺 Patient Bio-Profile")
-# Changed from Slider to Number Input for precision
 age = st.sidebar.number_input("Enter Patient Age", min_value=1, max_value=110, value=45, step=1)
 is_smoker = st.sidebar.toggle("Active Smoker", value=False)
 pre_existing = st.sidebar.toggle("Comorbidities", value=False)
@@ -53,17 +52,16 @@ R_dyn = {
     'S2': {'A0': -50, 'A1': -35, 'A2': -40}
 }
 
-# Bio-Logic Modifiers
+# The engine still uses 'eff_age' for the math, but we won't show the +10/15 logic to the user
 eff_age = age + (15 if is_smoker else 0) + (10 if pre_existing else 0)
 recovery_modifier = 1 / (1 + np.exp((eff_age - 75) / 10))
 P_dyn['S2']['A2']['S0'] = round(0.8 * recovery_modifier, 2)
 P_dyn['S2']['A2']['S2'] = round(1.0 - P_dyn['S2']['A2']['S0'] - P_dyn['S2']['A2']['S1'], 2)
 R_dyn['S2']['A2'] -= (eff_age * 1.5)
 
-# --- SOLVE ---
 opt_policy, state_values = policy_iteration(states, actions, P_dyn, R_dyn, 0.9)
 
-# --- MAIN DASHBOARD ---
+# --- DASHBOARD ---
 st.title("🩺 Real-Time Patient Recommendation Engine")
 
 tab1, tab2 = st.tabs(["🤖 Live Simulation & Reasoning", "📊 Probability Verification"])
@@ -72,43 +70,49 @@ with tab1:
     col_input, col_viz = st.columns([1, 1.5])
     
     with col_input:
-        current_state = st.selectbox("Current Patient Status:", ["Healthy", "Sick", "Critical"])
-        s_key = [k for k, v in state_labels.items() if v == current_state][0]
+        current_status = st.selectbox("Current Patient Status:", ["Healthy", "Sick", "Critical"])
+        s_key = [k for k, v in state_labels.items() if v == current_status][0]
         
         if st.button("Generate Recommendation"):
             best_a = opt_policy[s_key]
             st.divider()
             st.chat_message("assistant").write(f"**Recommendation: {action_labels[best_a]}**")
             
-            # Show Probability Outcomes as a Bar Chart
-            st.write("**Projected Outcome Distribution:**")
+            # --- INSIGHTS WITHOUT CALCULATIONS ---
+            insights = []
+            if pre_existing: insights.append("comorbidities")
+            if is_smoker: insights.append("smoking history")
+            if age > 70: insights.append("advanced age")
+            
+            reasoning_msg = f"This recommendation prioritizes the highest statistical probability of recovery."
+            if insights:
+                reasoning_msg = f"Given your {', '.join(insights)}, this action provides the most stable path to a 'Healthy' state while minimizing high-risk complications."
+            
+            st.write(f"**Chatbot Insight:** {reasoning_msg}")
+            
+            # Visual Distribution
             outcomes = P_dyn[s_key][best_a]
             chart_data = pd.DataFrame({
-                'Outcome State': [state_labels[k] for k in outcomes.keys()],
+                'Outcome': [state_labels[k] for k in outcomes.keys()],
                 'Probability (%)': [v * 100 for v in outcomes.values()]
             })
-            st.bar_chart(chart_data, x='Outcome State', y='Probability (%)', color="#3498db")
-            st.caption(f"Reasoning: The AI chose {action_labels[best_a]} because it yields the highest statistical probability of reaching a 'Healthy' state given a biological age of {eff_age}.")
+            st.bar_chart(chart_data, x='Outcome', y='Probability (%)', color="#2980b9")
 
     with col_viz:
-        st.subheader("Decision Flow Visualization")
-        # Visualizing ONLY the active decision to prevent clutter
-        dot_sim = graphviz.Digraph()
-        dot_sim.attr(rankdir='LR')
+        st.subheader("Decision Outcome Visualization")
+        dot = graphviz.Digraph()
+        dot.attr(rankdir='LR')
         for s in states:
-            is_curr = (s == s_key)
-            dot_sim.node(s, state_labels[s], style='filled', 
-                         fillcolor=colors[s] if is_curr else "#f0f0f0", 
-                         penwidth="4" if is_curr else "1")
+            dot.node(s, state_labels[s], style='filled', fillcolor=colors[s] if s == s_key else "#f0f0f0")
         
-        best_a = opt_policy[s_key]
-        for sn, prob in P_dyn[s_key][best_a].items():
+        for sn, prob in P_dyn[s_key][opt_policy[s_key]].items():
             if prob > 0:
-                dot_sim.edge(s_key, sn, label=f"{prob*100:.0f}% chance", color="#2980b9", penwidth="3")
-        st.graphviz_chart(dot_sim)
+                dot.edge(s_key, sn, label=f"{prob*100:.0f}% Outcome", color="#3498db", penwidth="3")
+        st.graphviz_chart(dot)
 
 with tab2:
-    st.subheader("State Transition Matrix (Continuous Age-Adjusted)")
+    # Full data view for verification
+    st.subheader("System Transition Logic")
     rows = []
     for s in states:
         for a in actions:
@@ -118,6 +122,6 @@ with tab2:
                 "To Healthy": p_vals.get('S0', 0),
                 "To Sick": p_vals.get('S1', 0),
                 "To Critical": p_vals.get('S2', 0),
-                "Check (Sum=1.0)": round(sum(p_vals.values()), 2)
+                "Sum Total": round(sum(p_vals.values()), 1)
             })
     st.table(pd.DataFrame(rows))
